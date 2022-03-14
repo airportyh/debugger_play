@@ -1,0 +1,15 @@
+* debug into JavaScript debugger extension
+* debug into Python debugger extension
+* try to connect to debugpy directly
+* try to connect to Chrome debugger protocol directly
+
+## Directions
+
+* Dig into JS debugging in VSCode
+* Dig into Chrome debugger protocol
+* Dig into Node ChakraCore TTD example
+* Dig into Node ChakraCore source code
+* Ask Mark Marron
+* Ask people in ChakraCore discord
+* Use Wireshark to understand Chrome debugger
+* Use Wireshark to understand VSCode debugger
