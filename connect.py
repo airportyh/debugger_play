@@ -1,3 +1,7 @@
+# First attempt ith websockets package
+# which is asyncIO-first
+# but it has a disconnect bug after ~10 seconds
+
 import sys
 import asyncio
 from websockets import connect

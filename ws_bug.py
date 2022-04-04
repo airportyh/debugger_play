@@ -1,6 +1,12 @@
 import sys
 import asyncio
 from websockets import connect
+import logging
+
+logging.basicConfig(
+    format="%(asctime)s %(message)s",
+    level=logging.DEBUG,
+)
 
 async def connect_to_websocket(uri):
     async with connect(uri) as ws:

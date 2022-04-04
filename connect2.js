@@ -5,7 +5,13 @@ async function main() {
     let client;
     try {
         // connect to endpoint
-        client = await CDP();
+        const wsEndpoint = process.argv[2];
+        if (!wsEndpoint) {
+            console.log("Please provide a WS endpoint");
+            return;
+        }
+        
+        client = await CDP({target: wsEndpoint});
         const { Debugger } = client;
         // extract domains
         client.on('event', (event) => {
