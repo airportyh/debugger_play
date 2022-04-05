@@ -7,6 +7,16 @@ import functools
 import sys
 import json
 
+command_aliases = {
+    "n": "next",
+    "s": "step",
+    "c": "continue",
+    "o": "out",
+}
+parsed_scripts = {}
+call_frames = None
+command_number = 1
+
 def run_in_executor(f):
     @functools.wraps(f)
     def inner(*args, **kwargs):
@@ -24,25 +34,67 @@ def ws_recv(ws):
 def ws_send(ws, message):
     ws.send(message)
 
+async def ws_send_command(ws, command):
+    global command_number
+    command["id"] = command_number
+    command_number += 1
+    ws_send(ws, json.dumps(command))
+
 @run_in_executor
 def ws_connect(ws, endpoint):
     ws.connect(endpoint)
 
+def print_program_location():
+    for frame in call_frames:
+        function_name = frame["functionName"]
+        location = frame["location"]
+        line_number = location["lineNumber"]
+        url = frame["url"]
+        print("  %s: %d" % (url, line_number))
+
 async def ws_consumer_handler(ws, q):
+    global call_frames
     while True:
         result = await ws_recv(ws)
-        print(result)
+        method = result.get("method")
+        if method == "Debugger.paused":
+            call_frames = result["params"]["callFrames"]
+            print()
+            print("Paused at")
+            print_program_location()
+            show_prompt()
+        elif method == "Debugger.scriptParsed":
+            pass
+        else:
+            print()
+            print(result)
+            show_prompt()
 
 async def ws_producer_handler(ws, q):
     while True:
-        message = await asyncio.create_task(q.get())
-        print("SEND:", message)
-        await ws.send(message)
+        cmd = await asyncio.create_task(q.get())
+        cmd = cmd.strip()
+        if cmd in command_aliases:
+            cmd = command_aliases[cmd]
+        if cmd == "step":
+            await ws_send_command(ws, {"method": "Debugger.stepInto"})
+        elif cmd == "next":
+            await ws_send_command(ws, {"method": "Debugger.stepOver"})
+        elif cmd == "out":
+            await ws_send_command(ws, {"method": "Debugger.stepOut"})
+        elif cmd == "continue":
+            await ws_send_command(ws, {"method": "Debugger.continueToLocation"})
+        elif cmd == "q":
+            print("Bye")
+            exit(0)
+        else:
+            print("Unknown command: %s" % cmd)
+            show_prompt()
 
 async def connect_and_initialize(ws, endpoint, q):
     await ws_connect(ws, endpoint)
-    await ws_send(ws, '{"id":1, "method": "Runtime.runIfWaitingForDebugger"}')
-    await ws_send(ws, '{"id":2, "method": "Debugger.enable"}')
+    await ws_send_command(ws, {"method": "Runtime.runIfWaitingForDebugger"})
+    await ws_send_command(ws, {"method": "Debugger.enable"})
     # From producer/consumer pattern in
     #   https://websockets.readthedocs.io/en/stable/howto/patterns.html
     consumer_task = asyncio.create_task(ws_consumer_handler(ws, q))
