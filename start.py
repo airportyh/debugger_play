@@ -187,9 +187,9 @@ def show_prompt():
 
 WS_URL_PATTERN = re.compile("^Debugger listening on (.*)\n$")
 
-async def process_reader(proc):
+async def stream_printer(stream):
     while True:
-        line = (await proc.stderr.readline()).decode("utf-8")
+        line = (await stream.readline()).decode("utf-8")
         print(colorama.Fore.YELLOW + line, end=colorama.Style.RESET_ALL)
 
 async def start_node_process(q):
@@ -201,7 +201,7 @@ async def start_node_process(q):
             except ProcessLookupError:
                 pass
     node = await create_subprocess_shell(
-        "node --inspect-brk=9226 ./example.js", 
+        "node --inspect-brk=9218 ./example.js", 
         stdout=PIPE,
         stderr=PIPE
     )
@@ -209,18 +209,23 @@ async def start_node_process(q):
 
     line1 = (await node.stderr.readline()).decode("utf-8")
     match = WS_URL_PATTERN.match(line1)
-    url = match.group(1)
+    if match:
+        url = match.group(1)
+    else:
+        print(line1)
+        return
     print(colorama.Fore.YELLOW + line1, end=colorama.Style.RESET_ALL)
     line2 = (await node.stderr.readline()).decode("utf-8")
     print(colorama.Fore.YELLOW + line2, end=colorama.Style.RESET_ALL)
     
     ws_handler = asyncio.create_task(web_socket_handler(url, q))
-    proc_reader = asyncio.create_task(process_reader(node))
+    stdout_printer = asyncio.create_task(stream_printer(node.stdout))
+    stderr_printer = asyncio.create_task(stream_printer(node.stderr))
     
-    # From producer/consumer pattern in
+    # From producer/consumer pattern inu
     #   https://websockets.readthedocs.io/en/stable/howto/patterns.html
-    done, pending = await asyncio.wait(
-        [ws_handler, proc_reader],
+    _, pending = await asyncio.wait(
+        [ws_handler, stdout_printer, stderr_printer],
         return_when=asyncio.FIRST_COMPLETED,
     )
     for task in pending:
