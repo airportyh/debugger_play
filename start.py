@@ -14,6 +14,10 @@ from asyncio.subprocess import PIPE
 import re
 import atexit
 import colorama
+import os
+
+CWD = os.getcwd() + "/"
+FILE_URL_REGEX = re.compile("^file\:\/\/(.*)$")
 
 command_aliases = {
     "n": "next",
@@ -62,7 +66,12 @@ def print_program_location():
     location = frame["location"]
     line_number = location["lineNumber"]
     url = frame["url"]
-    print("  %s: %d" % (url, line_number))
+    match = FILE_URL_REGEX.match(url)
+    if match:
+        url = match.group(1)
+        if url.startswith(CWD):
+            url = url[len(CWD):]
+    print("%s line %d" % (url, line_number))
 
 def print_backtrace():
     for frame in call_frames:
@@ -71,10 +80,6 @@ def print_backtrace():
         line_number = location["lineNumber"]
         url = frame["url"]
         print("  %s: %d" % (url, line_number))
-
-# def save_script(script):
-#     script_id = script['scriptId']
-#     parsed_scripts[script_id] = script
 
 async def list_source(ws):
     global list_pending
@@ -91,9 +96,17 @@ async def list_source(ws):
 
 def actually_list_source():
     frame = call_frames[0]
-    script_id = frame["location"]["scriptId"]
+    location = frame["location"]
+    line_no = location["lineNumber"]
+    script_id = location["scriptId"]
     script_source = script_sources[script_id]
-    print(script_source)
+    lines = list(enumerate(script_source.split("\n")))
+    shown_lines = lines[max(0, line_no - 5):line_no + 5]
+    for i, line in shown_lines:
+        if i == line_no:
+            print("->  %s" % line)
+        else:
+            print("    %s" % line)
     show_prompt()
 
 async def ws_consumer_handler(ws, q):
@@ -106,7 +119,7 @@ async def ws_consumer_handler(ws, q):
         if method == "Debugger.paused":
             call_frames = result["params"]["callFrames"]
             print()
-            print("Paused at")
+            print("Paused at ", end="")
             print_program_location()
             show_prompt()
         elif method == "Debugger.scriptParsed":
