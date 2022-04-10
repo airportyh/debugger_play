@@ -53,9 +53,13 @@ def ws_send(ws, message):
 
 async def ws_send_command(ws, command):
     global command_number
+    my_q = asyncio.Queue()
+    pending_requests[command_number] = my_q
     command["id"] = command_number
     command_number += 1
-    ws_send(ws, json.dumps(command))
+    await ws_send(ws, json.dumps(command))
+    reply = await my_q.get()
+    return reply
 
 @run_in_executor
 def ws_connect(ws, endpoint):
@@ -86,14 +90,11 @@ async def ensure_script_source(ws):
     frame = call_frames[0]
     script_id = frame["location"]["scriptId"]
     if script_id not in script_sources:
-        my_q = asyncio.Queue()
-        pending_requests[command_number] = my_q
-        asyncio.create_task(ws_send_command(ws, {
+        reply = await ws_send_command(ws, {
             'method': 'Debugger.getScriptSource', 
             'params': {'scriptId': script_id}
-        }))
-        response = await my_q.get()
-        script_source = response['result']['scriptSource']
+        })
+        script_source = reply['result']['scriptSource']
         script_sources[script_id] = script_source
 
 async def list_source(ws):
@@ -118,6 +119,7 @@ async def ws_consumer_handler(ws, q):
     global list_pending
     while True:
         result = await ws_recv(ws)
+        # print("recv", result)
         method = result.get("method")
         id = result.get("id")
         if id:
@@ -190,8 +192,8 @@ async def web_socket_handler(endpoint, q):
     ws = websocket.WebSocket()
     await ws_connect(ws, endpoint)
     
-    await ws_send_command(ws, {"method": "Runtime.runIfWaitingForDebugger"})
-    await ws_send_command(ws, {"method": "Debugger.enable"})
+    asyncio.create_task(ws_send_command(ws, {"method": "Runtime.runIfWaitingForDebugger"}))
+    asyncio.create_task(ws_send_command(ws, {"method": "Debugger.enable"}))
     
     consumer_task = asyncio.create_task(ws_consumer_handler(ws, q))
     producer_task = asyncio.create_task(ws_producer_handler(ws, q))
