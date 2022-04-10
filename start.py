@@ -26,13 +26,14 @@ command_aliases = {
     "o": "out",
     "bt": "backtrace",
     "l": "list",
+    "lc": "location",
 }
 parsed_scripts = {}
 script_sources = {}
 call_frames = None
 command_number = 1
-list_pending = None
 pending_requests = {}
+first_script_id = None
 
 def run_in_executor(f):
     @functools.wraps(f)
@@ -65,18 +66,26 @@ async def ws_send_command(ws, command):
 def ws_connect(ws, endpoint):
     ws.connect(endpoint)
 
-def print_program_location():
+async def print_program_location(ws):
+    await ensure_script_source(ws)
     frame = call_frames[0]
     function_name = frame["functionName"]
     location = frame["location"]
-    line_number = location["lineNumber"]
+    script_id = location["scriptId"]
+    script_source = script_sources[script_id]
+    lines = script_source.split("\n")
+    line_no = location["lineNumber"]
+    line_source = lines[line_no]
     url = frame["url"]
     match = FILE_URL_REGEX.match(url)
     if match:
         url = match.group(1)
         if url.startswith(CWD):
             url = url[len(CWD):]
-    print("%s line %d" % (url, line_number))
+    print()
+    print("Paused at %s line %d:" % (url, line_no))
+    print("-> %d %s" % (line_no + 1, line_source))
+    show_prompt()
 
 def print_backtrace():
     for frame in call_frames:
@@ -109,36 +118,40 @@ async def list_source(ws):
     print("Script %s" % script_id)
     for i, line in shown_lines:
         if i == line_no:
-            print("->  %s" % line)
+            print("-> %3d %s" % (i + 1, line))
         else:
-            print("    %s" % line)
+            print("   %3d %s" % (i + 1, line))
     show_prompt()
 
 async def ws_consumer_handler(ws, q):
     global call_frames
-    global list_pending
+    global first_script_id
     while True:
         result = await ws_recv(ws)
-        # print("recv", result)
         method = result.get("method")
         id = result.get("id")
         if id:
             if id in pending_requests:
                 await pending_requests[id].put(result)
                 del pending_requests[id]
-        elif method == "Debugger.paused":
-            call_frames = result["params"]["callFrames"]
-            print()
-            print("Paused at ", end="")
-            print_program_location()
-            show_prompt()
-        elif method == "Debugger.scriptParsed":
-            # save_script(result)
-            pass
+        elif method:
+            if method == "Debugger.paused":
+                call_frames = result["params"]["callFrames"]
+                if first_script_id is None:
+                    frame = call_frames[0]
+                    location = frame["location"]
+                    first_script_id = script_id = location["scriptId"]
+                asyncio.create_task(q.put("location"))
+            elif method == "Debugger.scriptParsed":
+                pass
+            elif method == "Debugger.resumed":
+                pass
+            else:
+                print()
+                print(result)
+                show_prompt()
         else:
-            print()
-            print(result)
-            show_prompt()
+            raise Exception("A message should have id or method")
 
 async def ws_producer_handler(ws, q):
     last_line = None
@@ -148,10 +161,7 @@ async def ws_producer_handler(ws, q):
         if line == "":
             line = last_line
         parts = line.split(" ")
-        if len(parts) == 1:
-            cmd = parts[0]
-        else:
-            cmd, *args = parts
+        cmd, *args = parts    
         if cmd in command_aliases:
             cmd = command_aliases[cmd]
         if cmd is None:
@@ -163,8 +173,24 @@ async def ws_producer_handler(ws, q):
         elif cmd == "out":
             await ws_send_command(ws, {"method": "Debugger.stepOut"})
         elif cmd == "continue":
-            script_id, line_no = args
-            await ws_send_command(ws, {
+            if len(args) == 0:
+                script_id = first_script_id
+                await ensure_script_source(ws)
+                frame = call_frames[0]
+                location = frame["location"]
+                line_no = location["lineNumber"]
+                script_id = location["scriptId"]
+                script_source = script_sources[script_id]
+                lines = script_source.split("\n")
+                line_no = len(lines) - 1
+            elif len(args) == 2:
+                script_id, line_no = args
+            else:
+                pdb.set_trace()
+                print("Wrong number of arguments for continue")
+                show_prompt()
+                continue
+            reply = await ws_send_command(ws, {
                 "method": "Debugger.continueToLocation",
                 "params": {
                     "location": {
@@ -173,10 +199,15 @@ async def ws_producer_handler(ws, q):
                     }
                 }
             })
+            if 'error' in reply:
+                print(reply['error']['message'])
+                show_prompt()
         elif cmd == "backtrace":
             print()
             print_backtrace()
             show_prompt()
+        elif cmd == "location":
+            await print_program_location(ws)
         elif cmd == "list":
             print()
             await list_source(ws)
