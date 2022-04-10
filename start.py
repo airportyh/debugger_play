@@ -102,6 +102,7 @@ def actually_list_source():
     script_source = script_sources[script_id]
     lines = list(enumerate(script_source.split("\n")))
     shown_lines = lines[max(0, line_no - 5):line_no + 5]
+    print("Script %s" % script_id)
     for i, line in shown_lines:
         if i == line_no:
             print("->  %s" % line)
@@ -138,14 +139,19 @@ async def ws_consumer_handler(ws, q):
                 show_prompt()
 
 async def ws_producer_handler(ws, q):
-    last_cmd = None
+    last_line = None
     while True:
-        cmd = await asyncio.create_task(q.get())
-        cmd = cmd.strip()
+        line = await asyncio.create_task(q.get())
+        line = line.strip()
+        if line == "":
+            line = last_line
+        parts = line.split(" ")
+        if len(parts) == 1:
+            cmd = parts[0]
+        else:
+            cmd, *args = parts
         if cmd in command_aliases:
             cmd = command_aliases[cmd]
-        if cmd == "":
-            cmd = last_cmd
         if cmd is None:
             show_prompt()
         elif cmd == "step":
@@ -155,7 +161,16 @@ async def ws_producer_handler(ws, q):
         elif cmd == "out":
             await ws_send_command(ws, {"method": "Debugger.stepOut"})
         elif cmd == "continue":
-            await ws_send_command(ws, {"method": "Debugger.continueToLocation"})
+            script_id, line_no = args
+            await ws_send_command(ws, {
+                "method": "Debugger.continueToLocation",
+                "params": {
+                    "location": {
+                        "scriptId": script_id,
+                        "lineNumber": int(line_no)
+                    }
+                }
+            })
         elif cmd == "backtrace":
             print()
             print_backtrace()
@@ -169,7 +184,7 @@ async def ws_producer_handler(ws, q):
         else:
             print("Unknown command: %s" % cmd)
             show_prompt()
-        last_cmd = cmd
+        last_line = line
 
 async def web_socket_handler(endpoint, q):
     ws = websocket.WebSocket()
