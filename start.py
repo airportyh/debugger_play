@@ -32,6 +32,7 @@ script_sources = {}
 call_frames = None
 command_number = 1
 list_pending = None
+pending_requests = {}
 
 def run_in_executor(f):
     @functools.wraps(f)
@@ -81,20 +82,22 @@ def print_backtrace():
         url = frame["url"]
         print("  %s: %d" % (url, line_number))
 
-async def list_source(ws):
-    global list_pending
+async def ensure_script_source(ws):
     frame = call_frames[0]
     script_id = frame["location"]["scriptId"]
     if script_id not in script_sources:
-        list_pending = (command_number, script_id)
-        await ws_send_command(ws, {
+        my_q = asyncio.Queue()
+        pending_requests[command_number] = my_q
+        asyncio.create_task(ws_send_command(ws, {
             'method': 'Debugger.getScriptSource', 
             'params': {'scriptId': script_id}
-        })
-    else:
-        actually_list_source()
+        }))
+        response = await my_q.get()
+        script_source = response['result']['scriptSource']
+        script_sources[script_id] = script_source
 
-def actually_list_source():
+async def list_source(ws):
+    await ensure_script_source(ws)
     frame = call_frames[0]
     location = frame["location"]
     line_no = location["lineNumber"]
@@ -117,7 +120,11 @@ async def ws_consumer_handler(ws, q):
         result = await ws_recv(ws)
         method = result.get("method")
         id = result.get("id")
-        if method == "Debugger.paused":
+        if id:
+            if id in pending_requests:
+                await pending_requests[id].put(result)
+                del pending_requests[id]
+        elif method == "Debugger.paused":
             call_frames = result["params"]["callFrames"]
             print()
             print("Paused at ", end="")
@@ -127,16 +134,9 @@ async def ws_consumer_handler(ws, q):
             # save_script(result)
             pass
         else:
-            if list_pending and list_pending[0] == id:
-                script_source = result['result']['scriptSource']
-                script_id = list_pending[1]
-                script_sources[script_id] = script_source
-                list_pending = None
-                actually_list_source()
-            else:
-                print()
-                print(result)
-                show_prompt()
+            print()
+            print(result)
+            show_prompt()
 
 async def ws_producer_handler(ws, q):
     last_line = None
