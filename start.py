@@ -5,6 +5,7 @@
 import asyncio
 import websocket
 import functools
+import requests
 import sys
 import json
 import pdb
@@ -27,6 +28,7 @@ command_aliases = {
     "bt": "backtrace",
     "l": "list",
     "lc": "location",
+    "p": "print",
 }
 parsed_scripts = {}
 script_sources = {}
@@ -186,7 +188,6 @@ async def ws_producer_handler(ws, q):
             elif len(args) == 2:
                 script_id, line_no = args
             else:
-                pdb.set_trace()
                 print("Wrong number of arguments for continue")
                 show_prompt()
                 continue
@@ -211,6 +212,29 @@ async def ws_producer_handler(ws, q):
         elif cmd == "list":
             print()
             await list_source(ws)
+        elif cmd == "print":
+            frame = call_frames[0]
+            call_frame_id = frame['callFrameId']
+            if len(args) == 1:
+                reply = await ws_send_command(ws, {
+                    "method": "Debugger.evaluateOnCallFrame",
+                    "params": {
+                        "callFrameId": call_frame_id,
+                        "expression": args[0]
+                    }
+                });
+                result = reply["result"]["result"]
+                if result["type"] == "undefined":
+                    print("undefined")
+                elif "value" in result:
+                    print(result["value"])
+                else:
+                    print(result)
+                show_prompt()
+            else:
+                print("Wrong number of arguments for print")
+                show_prompt()
+                continue
         elif cmd == "q":
             print("Bye")
             break
@@ -237,6 +261,8 @@ async def web_socket_handler(endpoint, q):
     )
     for task in pending:
         task.cancel()
+    
+    ws.close()
 
 def got_stdin_data(q):
     line = sys.stdin.readline()
@@ -252,6 +278,12 @@ async def stream_printer(stream):
     while True:
         line = (await stream.readline()).decode("utf-8")
         print(colorama.Fore.YELLOW + line, end=colorama.Style.RESET_ALL)
+
+async def connect_to_node_process(port, q):
+    resp = requests.get('http://localhost:%d/json/list' % port)
+    data = resp.json()
+    url = data[0]['webSocketDebuggerUrl']
+    await web_socket_handler(url, q)
 
 async def start_node_process(q):
     def cleanup_process():
@@ -299,6 +331,8 @@ async def main():
     ws_endpoint = None
     if len(sys.argv) >= 2:
         ws_endpoint = sys.argv[1]
+
+    port = 9229
     
     q = asyncio.Queue()
     loop = asyncio.get_event_loop()
@@ -308,10 +342,10 @@ async def main():
     show_prompt()
     try:
         if ws_endpoint:
-            await connect_and_initialize(ws_endpoint, q)
+            await web_socket_handler(ws_endpoint, q)
         else:
-            await start_node_process(q)
-        pass
+            await connect_to_node_process(port, q)
+            # await start_node_process(q)
     except KeyboardInterrupt:
         pass
     

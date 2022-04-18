@@ -1,24 +1,21 @@
 const CDP = require('chrome-remote-interface');
-const { sleep } = require('simple-sleep');
 
-async function main() {
+async function example() {
     let client;
     try {
         // connect to endpoint
         client = await CDP();
-        const { Debugger } = client;
         // extract domains
-        client.on('event', (event) => {
-            console.log("event", event);
+        const {Network, Page} = client;
+        // setup handlers
+        Network.requestWillBeSent((params) => {
+            console.log(params.request.url);
         });
-        let reply = await Debugger.enable();
-        console.log(reply);
-        reply = await Debugger.stepInto();
-        console.log(reply);
-        while (true) {
-            await sleep(1000);
-        }
-        
+        // enable events then start!
+        await Network.enable();
+        await Page.enable();
+        await Page.navigate({url: 'https://github.com'});
+        await Page.loadEventFired();
     } catch (err) {
         console.error(err);
     } finally {
@@ -28,4 +25,4 @@ async function main() {
     }
 }
 
-main();
+example();
