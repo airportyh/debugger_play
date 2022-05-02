@@ -349,6 +349,21 @@ async def connect_node(stdin_q):
 async def connect_chrome(stdin_q):
     await connect_to_port(9222, "Select Chrome target:", stdin_q)
 
+async def enter_port(stdin_q):
+    while True:
+        print("Enter port # (q to quit):")
+        show_prompt()
+        reply = (await stdin_q.get()).strip()
+        if reply == 'q':
+            return
+        try:
+            port = int(reply)
+
+            await connect_to_port(port, "Select target:", stdin_q)
+        except ValueError as e:
+            print("Invalid port number")
+            continue
+
 async def connect_to_port(port, message, stdin_q):
     url = 'http://localhost:%d/json/list' % port
     try:
@@ -393,21 +408,6 @@ async def enter_ws_url(stdin_q):
             await web_socket_handler(reply, stdin_q)
         except Exception as e:
             print(e)
-
-async def enter_port(stdin_q):
-    while True:
-        print("Enter port # (q to quit):")
-        show_prompt()
-        reply = (await stdin_q.get()).strip()
-        if reply == 'q':
-            return
-        try:
-            port = int(reply)
-
-            await connect_to_port(port, "Select target:", stdin_q)
-        except ValueError as e:
-            print("Invalid port number")
-            continue
 
 async def launch_node(stdin_q):
     print("Launch node")
@@ -471,28 +471,6 @@ async def main():
     loop = asyncio.get_event_loop()
     loop.add_reader(sys.stdin, got_stdin_data, stdin_q)
     await startup(stdin_q)
-
-# async def main2():
-#     ws_endpoint = None
-#     if len(sys.argv) >= 2:
-#         ws_endpoint = sys.argv[1]
-
-#     port = 9229
-    
-#     q = asyncio.Queue()
-#     loop = asyncio.get_event_loop()
-#     loop.add_reader(sys.stdin, got_stdin_data, q)
-#     handler = None
-    
-#     show_prompt()
-#     try:
-#         if ws_endpoint:
-#             await web_socket_handler(ws_endpoint, q)
-#         else:
-#             await connect_to_node_process(port, q)
-#             # await start_node_process(q)
-#     except KeyboardInterrupt:
-#         pass
     
 if __name__ == "__main__":
     asyncio.run(main())
