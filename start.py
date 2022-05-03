@@ -187,7 +187,7 @@ async def ws_producer_handler(ws, q):
         if line == "" and last_line is not None:
             line = last_line
         parts = line.split(" ")
-        cmd, *args = parts    
+        cmd, *args = parts
         if cmd in command_aliases:
             cmd = command_aliases[cmd]
         if cmd is None:
@@ -206,6 +206,7 @@ async def ws_producer_handler(ws, q):
             show_prompt()
         elif cmd == "location":
             create_task(print_program_location(ws))
+            continue
         elif cmd == "list":
             print()
             await list_source(ws)
@@ -215,11 +216,11 @@ async def ws_producer_handler(ws, q):
         elif cmd == "print":
             frame = call_frames[0]
             call_frame_id = frame['callFrameId']
-            if len(args) != 1:
+            if len(args) == 0:
                 print("Wrong number of arguments for print")
                 show_prompt()
             else:
-                create_task(eval_and_print(args[0], call_frame_id, ws))
+                create_task(eval_and_print(" ".join(args), call_frame_id, ws))
         elif cmd == "reload":
             create_task(ws_send_command(ws, {"method": "Page.waitForDebugger"}))            
             await ws_send_command(ws, {"method": "Page.reload"})
@@ -358,7 +359,6 @@ async def enter_port(stdin_q):
             return
         try:
             port = int(reply)
-
             await connect_to_port(port, "Select target:", stdin_q)
         except ValueError as e:
             print("Invalid port number")
