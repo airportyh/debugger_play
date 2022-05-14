@@ -28,19 +28,21 @@ command_aliases = {
     "c": "continue",
     "o": "out",
     "b": "break",
+    "bs": "breakpoints",
     "bt": "backtrace",
     "l": "list",
     "lc": "location",
     "p": "print",
     "pa": "pause",
-    "r": "run",
     "rl": "reload",
+    "sc": "scripts",
 }
 parsed_scripts = {}
 script_sources = {}
 call_frames = None
 command_number = 1
 pending_requests = {}
+breakpoints = []
 first_script_id = None
 
 def run_in_executor(f):
@@ -84,14 +86,24 @@ async def print_program_location(ws):
     lines = script_source.split("\n")
     line_no = location["lineNumber"]
     line_source = lines[line_no]
-    url = frame["url"]
-    match = FILE_URL_REGEX.match(url)
+    display = script_id
+    
+    if "url" in frame:
+        url = frame["url"]
+        display = url
+    elif script_id in parsed_scripts:
+        script = parsed_scripts[script_id]
+        url = script["params"]["url"]
+        display = url
+    
+    match = FILE_URL_REGEX.match(display)
     if match:
-        url = match.group(1)
-        if url.startswith(CWD):
-            url = url[len(CWD):]
+        display = match.group(1)
+        if display.startswith(CWD):
+            display = display[len(CWD):]
+
     print()
-    print("Paused at %s line %d:" % (url, line_no))
+    print("Paused at %s line %d:" % (display, line_no))
     print("-> %d %s" % (line_no + 1, line_source))
     show_prompt()
 
@@ -102,6 +114,16 @@ def print_backtrace():
         line_number = location["lineNumber"]
         url = frame["url"]
         print("  %s: %d" % (url, line_number))
+
+def print_breakpoints():
+    for breakpoint in breakpoints:
+        script_id = breakpoint['scriptId']
+        line_no = breakpoint['lineNumber']
+        results = list(filter(lambda s: s['params']['scriptId'] == script_id, parsed_scripts.values()))
+        if len(results) != 1:
+            pass
+        else:
+            print("%s:%d" % (results[0]['params']['url'], line_no))
 
 async def ensure_script_source(ws):
     frame = call_frames[0]
@@ -151,9 +173,11 @@ async def ws_consumer_handler(ws, q):
                     first_script_id = script_id = location["scriptId"]
                 create_task(q.put("location"))
             elif method == "Debugger.scriptParsed":
-                # print("script %s: %s" % (result["params"]["scriptId"], result["params"]["url"]))
-                pass
+                script_id = result["params"]["scriptId"]
+                parsed_scripts[script_id] = result
             elif method == "Debugger.resumed":
+                pass
+            elif method == "Debugger.breakpointResolved":
                 pass
             else:
                 print()
@@ -200,6 +224,7 @@ async def ws_producer_handler(ws, q):
             create_task(ws_send_command(ws, {"method": "Debugger.stepOut"}))
         elif cmd == "continue":
             create_task(ws_send_command(ws, {"method": "Debugger.resume"}))
+            show_prompt()
         elif cmd == "backtrace":
             print()
             print_backtrace()
@@ -224,25 +249,52 @@ async def ws_producer_handler(ws, q):
         elif cmd == "reload":
             create_task(ws_send_command(ws, {"method": "Page.waitForDebugger"}))            
             await ws_send_command(ws, {"method": "Page.reload"})
-            show_prompt()
-        elif cmd == "run":
             create_task(ws_send_command(ws, {"method": "Runtime.runIfWaitingForDebugger"}))
-            create_task(ws_send_command(ws, {"method": "Debugger.enable"}))
+            await create_task(ws_send_command(ws, {"method": "Debugger.enable"}))
             show_prompt()
         elif cmd == "break":
-            if len(args) != 2:
+            if len(args) != 1:
                 print("Wrong number of arguments for break")
                 show_prompt()
                 continue
-            url, line_no = args
+            filename, line_no = args[0].split(":")
+            line_no = int(line_no)
+            line_no -= 1
+            matches = []
+            for script in parsed_scripts.values():
+                url = script["params"]["url"]
+                if filename in url:
+                    matches.append(url)
+            
+            if len(matches) > 1:
+                print("Filename %s is ambiguous", filename)
+                continue
+            elif len(matches) == 0:
+                print("Could not find %s", filename)
+                continue
+            
+            url = matches[0]
             reply = await ws_send_command(ws, {
                 "method": "Debugger.setBreakpointByUrl",
                 "params": {
-                    "lineNumber": int(line_no),
+                    "lineNumber": line_no,
                     "url": url
                 }
             })
-            print(reply)
+            locations = reply["result"]["locations"]
+            if len(locations) > 0:
+                print("Breakpoint set at line %d" % (int(locations[0]["lineNumber"]) + 1))
+                breakpoints.extend(locations)
+            else:
+                print("Failed to set breakpoint", reply)
+            show_prompt()
+        elif cmd == "scripts":
+            for script in parsed_scripts.values():
+                url = script["params"]["url"]
+                print(url)
+            show_prompt()
+        elif cmd == "breakpoints":
+            print_breakpoints()
             show_prompt()
         elif cmd == "q":
             break
@@ -252,6 +304,8 @@ async def ws_producer_handler(ws, q):
         last_line = line
 
 async def web_socket_handler(endpoint, q):
+    global breakpoints
+    global parsed_scripts
     ws = websocket.WebSocket()
     await ws_connect(ws, endpoint)
     print("Connected!")
@@ -261,6 +315,9 @@ async def web_socket_handler(endpoint, q):
     
     consumer_task = create_task(ws_consumer_handler(ws, q))
     producer_task = create_task(ws_producer_handler(ws, q))
+
+    breakpoints = []
+    parsed_scripts = {}
 
     show_prompt()
     
@@ -390,12 +447,17 @@ async def connect_to_port(port, message, stdin_q):
             return
         try:
             idx = int(reply) - 1
-            endpoint = endpoints[idx]
-            endpoint_url = endpoint["webSocketDebuggerUrl"]
-            await web_socket_handler(endpoint_url, stdin_q)
         except ValueError:
             print("Invalid input %s", reply)
             continue
+
+        endpoint = endpoints[idx]
+        endpoint_url = endpoint["webSocketDebuggerUrl"]
+        await web_socket_handler(endpoint_url, stdin_q)
+        try:
+            endpoints = await request(url)
+        except ClientConnectorError as e:
+            break
 
 async def enter_ws_url(stdin_q):
     while True:
