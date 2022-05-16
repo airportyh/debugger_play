@@ -25,6 +25,7 @@ FILE_URL_REGEX = re.compile("^file\:\/\/(.*)$")
 command_aliases = {
     "n": "next",
     "s": "step",
+    "rs": "reverse-step",
     "c": "continue",
     "o": "out",
     "b": "break",
@@ -218,6 +219,8 @@ async def ws_producer_handler(ws, q):
             show_prompt()
         elif cmd == "step":
             create_task(ws_send_command(ws, {"method": "Debugger.stepInto"}))
+        elif cmd == "reverse-step":
+            create_task(ws_send_command(ws, {"method": "TimeTravel.stepBack"}))
         elif cmd == "next":
             create_task(ws_send_command(ws, {"method": "Debugger.stepOver"}))
         elif cmd == "out":
