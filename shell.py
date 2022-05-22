@@ -53,8 +53,11 @@ async def start_menu(stdin, stdout):
                             cursor_idx = len(line)
                         else:
                             assert cursor_idx < len(line) and cursor_idx >= 0
-                            line[cursor_idx] = event.key
-                            # TODO: make this insert instead of overwrite
+                            # line[cursor_idx] = event.key
+                            line.insert(cursor_idx, event.key)
+                            display_chunk = line[cursor_idx + 1:]
+                            stdout.write(bytes("".join(display_chunk), "utf-8"))
+                            stdout.write(bytes("\u001b[%dD" % len(display_chunk), "utf-8"))
                             cursor_idx += 1
                 elif event.key == "LEFT_ARROW":
                     stdout.write(bytes("\u001b[1D", "utf-8"))
